@@ -112,7 +112,6 @@ class ViewOperatorRayCast(bpy.types.Operator):
         bpy.context.window.cursor_set("EYEDROPPER")
         if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'MOUSEMOVE'}:
             ray_casting.main(context, event)
-            rayCasting.show_bounds = True
             
             return {'PASS_THROUGH'}
         elif event.type == 'LEFTMOUSE':
