@@ -25,11 +25,15 @@ introducing a fast lookup from id -> object.
 
 
 import bpy
+import blf
+import bgl
 from bpy.app import handlers
 from bpy.utils import register_module, unregister_module
 from bpy import props as p
 from contextlib import contextmanager
 import json
+from . import ray_casting
+from .ray_casting import rayCasting
 
 
 bl_info = {
@@ -82,19 +86,58 @@ class IDPropertyOpMixin(object):
     @classmethod
     def poll(self, ctx):
         return has_active_3d_view()
+    
 
-
-class SelectedToIdProperty(IDPropertyOpMixin, bpy.types.Operator):
-    bl_idname = "idproperty.get_selected"
+class ObjectPickerOperator(IDPropertyOpMixin, bpy.types.Operator):
+    bl_idname = "view3d.object_picker_operator"
+    bl_label = "Object Picker Operator"
 
     def execute(self, ctx):
-        sel = ctx.selected_objects
-        ob = None
-        if len(sel) > 1:
-            ob = sel[0]
+  
+        rayCasting.to_populate_data = self.to_populate_data
+        rayCasting.to_populate_field = self.to_populate_field
 
-        self.ob = ob
-        return {"FINISHED"}
+        with in_3dview(ctx) as override:
+            test = bpy.ops.view3d.modal_operator_raycast(override, 'INVOKE_DEFAULT')
+        
+        return {'FINISHED'}
+
+
+class ViewOperatorRayCast(bpy.types.Operator):
+    """Modal object selection with a ray cast"""
+    bl_idname = "view3d.modal_operator_raycast"
+    bl_label = "RayCast View Operator"
+
+    def modal(self, context, event):
+        bpy.context.window.cursor_set("EYEDROPPER")
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'MOUSEMOVE'}:
+            ray_casting.main(context, event)
+            rayCasting.show_bounds = True
+            
+            return {'PASS_THROUGH'}
+        elif event.type == 'LEFTMOUSE':
+            bpy.context.window.cursor_set("DEFAULT")
+            ray_casting.main(context, event)
+            
+            setattr(eval(rayCasting.to_populate_data), rayCasting.to_populate_field, rayCasting.result.name)
+            
+            return {'FINISHED'}
+        elif event.type in {'RIGHTMOUSE', 'ESC'}:
+            bpy.context.window.cursor_set("DEFAULT")
+            rayCasting.result = None
+            return {'CANCELLED'}
+        
+        return {'RUNNING_MODAL'}
+
+    def invoke(self, context, event):
+
+        if context.space_data.type == 'VIEW_3D':
+            context.window_manager.modal_handler_add(self)
+            return {'RUNNING_MODAL'}
+        else:
+            rayCasting.result = False
+            self.report({'WARNING'}, "Active space must be a View3d")
+            return {'CANCELLED'}
 
 
 class FindSelected(IDPropertyOpMixin, bpy.types.Operator):
@@ -150,7 +193,7 @@ def layout_id_prop(layout, data, prop):
     row.prop_search(data, prop, bpy.data, field_name)
 
     if field_name == "objects":
-        op_props = row.operator(SelectedToIdProperty.bl_idname, emboss=True, icon="EYEDROPPER")
+        op_props = row.operator("view3d.object_picker_operator", emboss=True, text="", icon="EYEDROPPER")
         op_props.to_populate_data = repr(data)
         op_props.to_populate_field = prop
 
@@ -334,8 +377,9 @@ def load_file_shim(_=None):
 
 
 def register():
-    bpy.utils.register_class(SelectedToIdProperty)
     bpy.utils.register_class(FindSelected)
+    bpy.utils.register_class(ObjectPickerOperator)
+    bpy.utils.register_class(ViewOperatorRayCast)
 
     for col_name, type_name in SUPPORTED_COLLECTIONS:
         type = getattr(bpy.types, type_name)
@@ -350,8 +394,9 @@ def register():
 
 
 def unregister():
-    bpy.utils.unregister_class(SelectedToIdProperty)
     bpy.utils.unregister_class(FindSelected)
+    bpy.utils.unregister_class(ObjectPickerOperator)
+    bpy.utils.unregister_class(ViewOperatorRayCast)
 
     for col_name, type_name in SUPPORTED_COLLECTIONS:
         type = getattr(bpy.types, type_name)
